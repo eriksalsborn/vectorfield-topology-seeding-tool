@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 import warnings
 import numpy as np
 import pandas as pd
+import csv
 from vtk import vtkStreamTracer, vtkPoints, vtkPolyDataMapper, vtkActor, vtkPolyData, vtkImageData
 from vtkmodules.util.numpy_support import vtk_to_numpy
 from seedpoint_processor import constants
@@ -171,14 +172,50 @@ class SeedpointProcessor():
                     critical_point_location.append('null')
                     logging.debug(f"Index {i} has length zero")
 
-        self.seedpoint_info['X'] = [s[0] for s in self.seedpoints]
-        self.seedpoint_info['Y'] = [s[1] for s in self.seedpoints]
-        self.seedpoint_info['Z'] = [s[2] for s in self.seedpoints]
-        self.seedpoint_info['EarthSide'] = seed_side
-        self.seedpoint_info['FieldlineStatus'] = seed_status
-        self.seedpoint_info['CriticalPoint'] = critical_point_location
 
-       
+        batch_size = 5 # should be 4 in the future
+        self_seedpoints = self.seedpoints
+
+        list_seedpoints = []
+        list_seed_side = []
+        list_seed_status = []
+        list_critical_point_location = []
+
+        # Sort function, we want to sort all list according to the order 
+        # batch_seed_status is sortered in
+        def custom_key(element):
+            order = ['IMF', 'CLOSED', 'OPEN_NORTH', 'OPEN_SOUTH']
+            return order.index(element)
+
+        # take 4 points at the time and sort them
+        for i in range(0, len(seed_status), batch_size):
+            # Take 4 points at the time
+            batch_seed_status = seed_status[i:i+batch_size]
+            batch_seed_side = seed_side[i:i+batch_size]
+            batch_critical_point_location = critical_point_location[i:i+batch_size]
+            batch_self_seedpoints = self_seedpoints[i:i+batch_size]
+
+            # Sort all the lists 
+            sorted_batch_seed_side = sorted(batch_seed_side, key=lambda x: custom_key(batch_seed_status[batch_seed_side.index(x)]))
+            sorted_batch_critical_point_location = sorted(batch_critical_point_location, key=lambda x: custom_key(batch_seed_status[batch_critical_point_location.index(x)]))
+            sorted_batch_self_seedpoints = sorted(batch_self_seedpoints, key=lambda x: custom_key(batch_seed_status[np.where(batch_self_seedpoints==x)[0][0]]))
+            sorted_batch_seed_status = sorted(batch_seed_status, key=custom_key)
+
+            #print("this is sorted seedpoints: ", sorted_batch_self_seedpoints)
+
+            # Append to the new list
+            list_seedpoints.append(sorted_batch_self_seedpoints)
+            list_seed_side.append(sorted_batch_seed_side)
+            list_seed_status.append(sorted_batch_seed_status)
+            list_critical_point_location.append(sorted_batch_critical_point_location)
+
+        self.seedpoint_info['X'] = [s[0] for s in self.seedpoints]#self.seedpoints]
+        self.seedpoint_info['Y'] = [s[1] for s in self.seedpoints]#self.seedpoints]
+        self.seedpoint_info['Z'] = [s[2] for s in self.seedpoints] #self.seedpoints]
+        self.seedpoint_info['EarthSide'] = seed_side #seed_side
+        self.seedpoint_info['FieldlineStatus'] = seed_status #seed_status
+        self.seedpoint_info['CriticalPoint'] = critical_point_location #critical_point_location
+
 
     def __get_status_seedpoint(self, streamline_points: Tuple[float,float,float], critical_point: Tuple[float,float,float]) -> Tuple[EarthSide, FieldlineStatus]:
         """ Gets the status of a certain streamline """
@@ -301,7 +338,7 @@ class SeedpointProcessor():
         for i in range(num_chunks):
             chunks.append(df[i*chunk_size:(i+1)*chunk_size])
         return chunks
-
+    
     def openspace_seeding(self, z_spacing=0, p=0, filename='seedpoints_openspace.txt') -> None:  
 
         #Get pairs of 4
@@ -353,3 +390,38 @@ class SeedpointProcessor():
             
         np.savetxt(filename, res)
         logging.info(f'Saved openspace seedpoints to: "{filename}"')
+
+    # Get two csv files, dayside and nightside, containing seedpoints in seedgroups with the correct order for openspace
+    def openspace_seeding_csv(self, filename_dayside='dayside_file.csv', filename_nightside='nightside_file.csv') -> None:  
+
+        #Get pairs of 4
+        seedgroups = self.__split_dataframe(5)
+        indices_without_one_of_each = []
+
+        final_seed_groups = []
+        for index, seedgroup in enumerate(seedgroups):
+            seedgroup = seedgroup.drop_duplicates(subset='FieldlineStatus')
+
+            if(len(seedgroup) != 4):
+                indices_without_one_of_each.append(index)
+            else:
+                seedgroup = seedgroup.sort_values("FieldlineStatus")
+                seedgroup = seedgroup.reset_index(drop=True)
+                seedgroup = seedgroup.reindex([1, 0, 2, 3])
+                final_seed_groups.append(seedgroup)
+
+        df_final = pd.concat(final_seed_groups)
+        data = list(zip(df_final['X'].tolist(),df_final['Y'].tolist(),df_final['Z'].tolist(),df_final['FieldlineStatus'].tolist(),df_final['EarthSide'].tolist(), df_final['CriticalPoint'].tolist()))
+
+        with open(filename_dayside, mode='w', newline='') as csv_file_dayside, open(filename_nightside, mode='w', newline='') as csv_file_nightside:
+            writer_dayside = csv.writer(csv_file_dayside)
+            writer_nightside = csv.writer(csv_file_nightside)
+
+            for row in data:
+                for element in row:
+                    if element == 'DAYSIDE':
+                        writer_dayside.writerow(row)
+                    elif element == 'NIGHTSIDE':
+                        writer_nightside.writerow(row)
+                
+        logging.info(f'Saved openspace seedpoints to: "{filename_dayside}" and "{filename_nightside}"')
