@@ -48,6 +48,7 @@ def main():
     sp_processor.visualize()
     sp_processor.visualize(side=EarthSide.DAYSIDE.value, status=FieldlineStatus.CLOSED.value)
     sp_processor.visualize(side=EarthSide.NIGHTSIDE.value, status=FieldlineStatus.CLOSED.value)
+    sp_processor.openspace_seeding_csv()
 
 if __name__ == '__main__':
     main()
